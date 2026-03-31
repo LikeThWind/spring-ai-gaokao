@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI志愿填报顾问</title>
+    <link rel="stylesheet" href="./chat-style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="chat-container">
+            <!-- 头部 -->
+            <div class="chat-header">
+                <h1 class="chat-title">AI志愿填报顾问</h1>
+                <button class="new-chat-btn" @click="startNewChat" title="新建会话">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- 消息列表 -->
+            <div class="messages-container" ref="messagesContainer">
+                <div v-if="messages.length === 0" class="welcome-message">
+                    <div class="welcome-icon">🤖</div>
+                    <h2>你好！我是AI志愿填报顾问</h2>
+                    <p>请问有什么可以帮助你的吗？</p>
+                </div>
+
+                <div v-for="(msg, index) in messages" :key="index" 
+                     :class="['message', msg.type]">
+                    <div class="message-avatar">
+                        <span v-if="msg.type === 'user'">👤</span>
+                        <span v-else>🤖</span>
+                    </div>
+                    <div class="message-content">
+                        <div class="message-text" v-html="formatMessage(msg.text)"></div>
+                        <div class="message-time">{{ msg.time }}</div>
+                    </div>
+                </div>
+
+                <div v-if="isLoading" class="message assistant">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-content">
+                        <div class="typing-indicator">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="input-container">
+                <textarea 
+                    v-model="userInput" 
+                    @keydown.enter.exact.prevent="sendMessage"
+                    placeholder="输入你的问题..."
+                    rows="1"
+                    :disabled="isLoading"
+                ></textarea>
+                <button 
+                    class="send-btn" 
+                    @click="sendMessage"
+                    :disabled="!userInput.trim() || isLoading"
+                >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, nextTick, onMounted } = Vue;
+        
+        const app = createApp({
+            setup() {
+                const messages = ref([]);
+                const userInput = ref('');
+                const isLoading = ref(false);
+                const memoryId = ref('');
+                const messagesContainer = ref(null);
+
+                // 生成新的 memoryId (使用时间戳)
+                const generateMemoryId = () => {
+                    return Date.now().toString();
+                };
+
+                // 初始化 memoryId
+                onMounted(() => {
+                    memoryId.value = generateMemoryId();
+                    console.log('初始化 memoryId:', memoryId.value);
+                });
+
+                // 格式化时间
+                const formatTime = () => {
+                    const now = new Date();
+                    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+                };
+
+                // 格式化消息文本 (支持换行)
+                const formatMessage = (text) => {
+                    return text.replace(/\n/g, '<br>');
+                };
+
+                // 滚动到底部
+                const scrollToBottom = async () => {
+                    await nextTick();
+                    if (messagesContainer.value) {
+                        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+                    }
+                };
+
+                // 发送消息
+                const sendMessage = async () => {
+                    if (!userInput.value.trim() || isLoading.value) return;
+
+                    const message = userInput.value.trim();
+                    userInput.value = '';
+
+                    // 添加用户消息
+                    messages.value.push({
+                        type: 'user',
+                        text: message,
+                        time: formatTime()
+                    });
+
+                    scrollToBottom();
+                    isLoading.value = true;
+
+                    try {
+                        // 调用后端 chat 接口 (使用完整的后端地址)
+                        const backendUrl = 'http://localhost:8080'; // 根据你的后端端口修改
+                        console.log('发送请求:', `${backendUrl}/chat?memoryId=${memoryId.value}&message=${encodeURIComponent(message)}`);
+                        
+                        const response = await fetch(`${backendUrl}/chat?memoryId=${memoryId.value}&message=${encodeURIComponent(message)}`, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'text/plain'
+                            }
+                        });
+                        
+                        console.log('响应状态:', response.status, response.statusText);
+                        
+                        if (!response.ok) {
+                            throw new Error(`网络请求失败: ${response.status} ${response.statusText}`);
+                        }
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let assistantMessage = {
+                            type: 'assistant',
+                            text: '',
+                            time: formatTime()
+                        };
+                        messages.value.push(assistantMessage);
+
+                        // 读取流式响应
+                        let chunkCount = 0;
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) {
+                                console.log('流式响应结束，共接收', chunkCount, '个数据块');
+                                break;
+                            }
+                            
+                            chunkCount++;
+                            const chunk = decoder.decode(value, { stream: true });
+                            console.log('接收数据块', chunkCount, ':', chunk);
+                            assistantMessage.text += chunk;
+                            scrollToBottom();
+                        }
+
+                    } catch (error) {
+                        console.error('发送消息失败:', error);
+                        messages.value.push({
+                            type: 'assistant',
+                            text: `抱歉，我遇到了一些问题：${error.message}`,
+                            time: formatTime()
+                        });
+                    } finally {
+                        isLoading.value = false;
+                        scrollToBottom();
+                    }
+                };
+
+                // 开始新会话
+                const startNewChat = () => {
+                    if (confirm('确定要开始新会话吗？当前会话记录将被清空。')) {
+                        messages.value = [];
+                        memoryId.value = generateMemoryId();
+                        userInput.value = '';
+                        console.log('新会话 memoryId:', memoryId.value);
+                    }
+                };
+
+                return {
+                    messages,
+                    userInput,
+                    isLoading,
+                    memoryId,
+                    messagesContainer,
+                    sendMessage,
+                    startNewChat,
+                    formatMessage
+                };
+            }
+        });
+
+        app.mount('#app');
+    </script>
+</body>
+</html>
